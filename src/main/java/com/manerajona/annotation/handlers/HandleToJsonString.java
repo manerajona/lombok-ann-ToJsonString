@@ -1,7 +1,7 @@
 package com.manerajona.annotation.handlers;
 
-import com.manerajona.annotation.ToJsonString;
 import com.google.auto.service.AutoService;
+import com.manerajona.annotation.ToJsonString;
 import com.sun.source.tree.Tree;
 import com.sun.tools.javac.code.Flags;
 import com.sun.tools.javac.tree.JCTree;
@@ -38,14 +38,16 @@ public class HandleToJsonString extends JavacAnnotationHandler<ToJsonString> {
         //remove import
         deleteImportFromCompilationUnit(annotationNode, "lombok.AccessLevel");
 
-        Boolean callSuper =  annotation.getInstance().callSuper();
-
+        Boolean callSuper = annotation.getInstance().callSuper();
         if (!annotation.isExplicit("callSuper")) callSuper = null;
 
-        generateToJsonString(annotationNode.up(), annotationNode, callSuper);
+        boolean isSecret = annotation.getInstance().isSecret();
+        if (!annotation.isExplicit("isSecret")) isSecret = false;
+
+        generateToJsonString(annotationNode.up(), annotationNode, callSuper, isSecret);
     }
 
-    public void generateToJsonString(JavacNode typeNode, JavacNode source, Boolean callSuper) {
+    public void generateToJsonString(JavacNode typeNode, JavacNode source, Boolean callSuper, Boolean isSecret) {
 
         if (!isClassOrEnum(typeNode)) {
             source.addError("@ToJsonString is only supported on a class or enum.");
@@ -63,7 +65,7 @@ public class HandleToJsonString extends JavacAnnotationHandler<ToJsonString> {
                             case SKIP:
                                 break;
                             case WARN:
-                                source.addWarning("Generating toString implementation but without a call to superclass, even though this class does not extend java.lang.Object. If this is intentional, add '@ToString(callSuper=false)' to your type.");
+                                source.addWarning("Generating toString implementation but without a call to superclass, even though this class does not extend java.lang.Object. If this is intentional, add '@ToJsonString(callSuper=false)' to your type.");
                                 break;
                         }
                     }
@@ -72,14 +74,7 @@ public class HandleToJsonString extends JavacAnnotationHandler<ToJsonString> {
                 typeNode.get().accept(new TreeTranslator() {
                     @Override
                     public void visitClassDef(JCTree.JCClassDecl jcClassDecl) {
-                        List<JCTree.JCVariableDecl> variables = List.nil();
-
-                        for (JCTree tree : jcClassDecl.defs) {
-                            if (!tree.getKind().equals(Tree.Kind.VARIABLE)) continue;
-                            JCTree.JCVariableDecl jcVariableDecl = (JCTree.JCVariableDecl) tree;
-                            variables = variables.append(jcVariableDecl);
-                        }
-                        JCTree.JCMethodDecl method = createToJsonStringMethodDecl(variables, typeNode, source);
+                        JCTree.JCMethodDecl method = createToJsonStringMethodDecl(jcClassDecl.defs, typeNode, source, isSecret);
                         JavacHandlerUtil.injectMethod(typeNode, method);
                     }
                 });
@@ -93,7 +88,7 @@ public class HandleToJsonString extends JavacAnnotationHandler<ToJsonString> {
         }
     }
 
-    static JCTree.JCMethodDecl createToJsonStringMethodDecl(List<JCTree.JCVariableDecl> variables, JavacNode typeNode, JavacNode source) {
+    static JCTree.JCMethodDecl createToJsonStringMethodDecl(List<JCTree> defs, JavacNode typeNode, JavacNode source, Boolean isSecret) {
 
         JavacTreeMaker maker = typeNode.getTreeMaker();
 
@@ -102,19 +97,32 @@ public class HandleToJsonString extends JavacAnnotationHandler<ToJsonString> {
         JCTree.JCExpression returnType = genJavaLangTypeRef(typeNode, "String");
 
         JCTree.JCExpression expression = maker.Literal("{");
-        for (int i = 0; i < variables.size(); i++) {
-            JCTree.JCVariableDecl var = variables.get(i);
-            if (i != 0) {
-                expression = maker.Binary(CTC_PLUS, expression, maker.Literal(",\"" + var.name.toString() + "\":"));
-            } else {
-                expression = maker.Binary(CTC_PLUS, expression, maker.Literal("\"" + var.name.toString() + "\":"));
-            }
-            if (var.vartype.toString().contains("String")) {
-                expression = maker.Binary(CTC_PLUS, expression, maker.Literal("\""));
-            }
-            expression = maker.Binary(CTC_PLUS, expression, maker.Ident(var.name));
-            if (var.vartype.toString().contains("String")) {
-                expression = maker.Binary(CTC_PLUS, expression, maker.Literal("\""));
+
+        boolean first = true;
+        for (JCTree tree : defs) {
+
+            if (tree.getKind().equals(Tree.Kind.VARIABLE)) {
+                JCTree.JCVariableDecl var = (JCTree.JCVariableDecl) tree;
+
+                final boolean typeString = var.vartype.toString().contains("String");
+
+                if (first) {
+                    expression = maker.Binary(CTC_PLUS, expression, maker.Literal("\"" + var.name + "\":"));
+                    first = false;
+                } else {
+                    expression = maker.Binary(CTC_PLUS, expression, maker.Literal(",\"" + var.name + "\":"));
+                }
+                if (typeString) {
+                    expression = maker.Binary(CTC_PLUS, expression, maker.Literal("\""));
+                }
+                if (isSecret) {
+                    expression = maker.Binary(CTC_PLUS, expression, maker.Literal("?"));
+                } else {
+                    expression = maker.Binary(CTC_PLUS, expression, maker.Ident(var));
+                }
+                if (typeString) {
+                    expression = maker.Binary(CTC_PLUS, expression, maker.Literal("\""));
+                }
             }
         }
         expression = maker.Binary(CTC_PLUS, expression, maker.Literal("}"));
