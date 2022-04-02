@@ -15,7 +15,7 @@ class ToStringJsonTest {
         assertEquals("{\"name\":\"Example\"}",  t.toString());
         assertNotEquals("{\"name\":\"Example\"}",  new Thing1("Example").toString());
         assertEquals("{\"id\":1,\"name\":\"Example\",\"thing\":{\"name\":\"Example\"}}",  new ComplexThing(1L, "Example", t).toString());
-        assertEquals("{\"user\":\"*****\",\"password\":\"*****\"}",  new SecretThing("user", "12345").toString());
+        assertEquals("{\"user\":\"?\",\"password\":\"?\"}",  new SecretThing("user", "12345").toString());
     }
 
     @ToJsonString
